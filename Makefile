@@ -14,14 +14,19 @@ SRCS := \
     $(SRC_DIR)/utils/config.cpp \
     $(SRC_DIR)/utils/logger.cpp \
     $(SRC_DIR)/sftp/sftp_client.cpp \
-    $(SRC_DIR)/paralelismo/sftp_paralelo.cpp
+    $(SRC_DIR)/csv/csv_parseo.cpp \
+    $(SRC_DIR)/paralelismo/sftp_paralelo.cpp \
+    $(SRC_DIR)/paralelismo/parseo_paralelo.cpp
 
 # Headers
 HEADERS := \
     $(SRC_DIR)/utils/config.h \
     $(SRC_DIR)/utils/logger.h \
     $(SRC_DIR)/sftp/sftp_client.h \
-    $(SRC_DIR)/paralelismo/sftp_paralelo.h
+    $(SRC_DIR)/csv/csv_parseo.h \
+    $(SRC_DIR)/csv/transaccion.h \
+    $(SRC_DIR)/paralelismo/sftp_paralelo.h \
+    $(SRC_DIR)/paralelismo/parseo_paralelo.h
 
 # Objetos
 OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
@@ -37,6 +42,7 @@ all: dirs $(TARGET)
 dirs:
 	@mkdir -p $(BUILD_DIR)/utils
 	@mkdir -p $(BUILD_DIR)/sftp
+	@mkdir -p $(BUILD_DIR)/csv
 	@mkdir -p $(BUILD_DIR)/paralelismo
 	@mkdir -p $(OUTPUT_DIR)
 
