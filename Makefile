@@ -8,7 +8,7 @@ SRC_DIR := src
 BUILD_DIR := build
 OUTPUT_DIR := output
 
-# Archivos fuente
+# Archivos fuente (Modificado: Añadido api_paralelo.cpp)
 SRCS := \
     $(SRC_DIR)/main.cpp \
     $(SRC_DIR)/utils/config.cpp \
@@ -16,9 +16,11 @@ SRCS := \
     $(SRC_DIR)/sftp/sftp_client.cpp \
     $(SRC_DIR)/csv/csv_parseo.cpp \
     $(SRC_DIR)/paralelismo/sftp_paralelo.cpp \
-    $(SRC_DIR)/paralelismo/parseo_paralelo.cpp
+    $(SRC_DIR)/paralelismo/parseo_paralelo.cpp \
+    $(SRC_DIR)/api/api.cpp \
+    $(SRC_DIR)/paralelismo/api_paralelo.cpp
 
-# Headers
+# Headers (Modificado: Añadido api_paralelo.h)
 HEADERS := \
     $(SRC_DIR)/utils/config.h \
     $(SRC_DIR)/utils/logger.h \
@@ -26,7 +28,9 @@ HEADERS := \
     $(SRC_DIR)/csv/csv_parseo.h \
     $(SRC_DIR)/csv/transaccion.h \
     $(SRC_DIR)/paralelismo/sftp_paralelo.h \
-    $(SRC_DIR)/paralelismo/parseo_paralelo.h
+    $(SRC_DIR)/paralelismo/parseo_paralelo.h \
+    $(SRC_DIR)/api/api.h \
+    $(SRC_DIR)/paralelismo/api_paralelo.h
 
 # Objetos
 OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
@@ -44,6 +48,7 @@ dirs:
 	@mkdir -p $(BUILD_DIR)/sftp
 	@mkdir -p $(BUILD_DIR)/csv
 	@mkdir -p $(BUILD_DIR)/paralelismo
+	@mkdir -p $(BUILD_DIR)/api
 	@mkdir -p $(OUTPUT_DIR)
 
 # Link final

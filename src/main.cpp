@@ -1,8 +1,8 @@
 // =============================================================================
-// main.cpp - Punto de entrada del programa (SFTP + Parseo CSV)
+// main.cpp - Punto de entrada del programa completo (SFTP + Parseo + API)
 //
-// Orquesta el flujo completo hasta la etapa de parseo: descarga SFTP paralela
-// y lectura/validación paralela de archivos CSV. Ofrece menú con 3 opciones.
+// Orquesta las tres fases: descarga SFTP, parseo CSV paralelo
+// y consultas API paralelas con cálculo de métricas por género.
 // =============================================================================
 
 #include <iostream>
@@ -16,6 +16,7 @@
 #include "csv/transaccion.h"
 #include "paralelismo/sftp_paralelo.h"
 #include "paralelismo/parseo_paralelo.h"
+#include "paralelismo/api_paralelo.h"
 
 namespace fs = std::filesystem;
 
@@ -63,7 +64,7 @@ int main() {
     }
 
     // -------------------------------------------------------------------------
-    // FASE 2: Parseo CSV paralelo (módulo agregado en esta etapa)
+    // FASE 2: Parseo CSV paralelo (mismo módulo que Paralela_2)
     // -------------------------------------------------------------------------
     if (opcion == 2 || opcion == 3) {
         LOG_INFO("Fase 2: Parseando archivos CSV...");
@@ -76,6 +77,19 @@ int main() {
         user_threads_parseo = std::clamp(user_threads_parseo, 1, max_threads);
 
         ParseoParalelo::procesarArchivos(user_threads_parseo, todasLasTransacciones);
+
+        // ---------------------------------------------------------------------
+        // FASE 3: Consultas API paralelas y cálculo de métricas (módulo propio)
+        // ---------------------------------------------------------------------
+        if (!todasLasTransacciones.empty()) {
+            int user_threads_api;
+            std::cout << "\n=== CONFIGURACION API ===\n";
+            std::cout << "Ingrese cantidad de hilos para la API (Modo Test): ";
+            std::cin >> user_threads_api;
+            user_threads_api = std::clamp(user_threads_api, 1, max_threads);
+
+            APIParalelo::procesarConsultas(user_threads_api, todasLasTransacciones);
+        }
     }
 
     double elapsed = omp_get_wtime() - start_time;

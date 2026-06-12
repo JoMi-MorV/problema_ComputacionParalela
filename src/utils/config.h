@@ -22,6 +22,7 @@ namespace Config {
     // Rutas locales donde se guardan archivos y logs
     constexpr const char* OUTPUT_DIR = "output/";
     constexpr const char* LOG_FILE = "output/log.txt";
+    constexpr const char* RESULTS_FILE = "output/resultados.txt"; // Resultados de métricas API
 
     // Timeouts y política de reintentos para transferencias SFTP
     constexpr int CURL_CONNECT_TIMEOUT = 10;   // Segundos para el handshake SSH
