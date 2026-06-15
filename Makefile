@@ -70,4 +70,4 @@ clean:
 	rm -rf $(BUILD_DIR)
 	rm -f $(TARGET)
 	rm -f $(OUTPUT_DIR)/*.txt
-	@echo "✓ Limpieza completada"
+	@echo "Limpieza completada"

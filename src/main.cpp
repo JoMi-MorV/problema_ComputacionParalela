@@ -1,11 +1,12 @@
 // =============================================================================
-// main.cpp - Punto de entrada del programa completo (SFTP + Parseo + API)
+// main.cpp - Punto de entrada automatizado (SFTP + Parseo + API)
 //
-// Orquesta las tres fases: descarga SFTP, parseo CSV paralelo
-// y consultas API paralelas con cálculo de métricas por género.
+// Orquesta las tres fases de forma continua y automatizada: descarga SFTP,
+// parseo CSV paralelo, consulta a API REST con caché y volcado a resultados.txt.
 // =============================================================================
 
 #include <iostream>
+#include <fstream>
 #include <filesystem>
 #include <vector>
 #include <algorithm>
@@ -21,79 +22,94 @@
 namespace fs = std::filesystem;
 
 int main() {
-    // Crea la carpeta de salida si no existe
+    // 1. Inicialización del entorno
     fs::create_directories(Config::OUTPUT_DIR);
 
-    // Abre el archivo de log global
     if (!Logger::getInstance().openLogFile(Config::LOG_FILE)) {
-        std::cerr << "Warning: No se pudo abrir el archivo log global" << std::endl;
+        std::cerr << "Warning: No se pudo abrir el archivo log global (" << Config::LOG_FILE << ")" << std::endl;
     }
 
     double start_time = omp_get_wtime();
-    LOG_INFO("=== Iniciando aplicación Cruz Morada ===");
-
-    // Menú principal: el usuario elige qué fases ejecutar
-    int opcion;
-    std::cout << "\n=== MENU ===\n";
-    std::cout << "1. Descargar CSV\n";
-    std::cout << "2. Parsear CSV\n";
-    std::cout << "3. Descargar + Parsear\n";
-    std::cout << "Seleccione opcion: ";
-    std::cin >> opcion;
+    LOG_INFO("=== Iniciando aplicación ===");
+    std::cout << "=== INICIANDO ===\n" << std::endl;
 
     int max_threads = omp_get_num_procs();
     std::vector<Transaccion> todasLasTransacciones;
 
-    // -------------------------------------------------------------------------
-    // FASE 1: Descarga SFTP paralela (mismo módulo que Paralela_parte_SFTP)
-    // -------------------------------------------------------------------------
-    if (opcion == 1 || opcion == 3) {
-        LOG_INFO("Fase 1: Descargando archivos...");
+    std::cout << "[+] Cores detectados: " << max_threads << std::endl;
 
-        int user_threads;
-        std::cout << "\nHilos para Descarga (1-" << max_threads << "): ";
-        std::cin >> user_threads;
-        user_threads = std::clamp(user_threads, 1, max_threads);
+    // Variables de tiempo inicializadas
+    double tiempo_sftp = 0.0;
+    double tiempo_parseo = 0.0;
+    double tiempo_api = 0.0;
 
-        int descargados = 0, omitidos = 0, fallados = 0;
-        if (SFTPParalelo::descargarArchivos(user_threads, descargados, omitidos, fallados)) {
-            std::cout << "\nDescargados: " << descargados
-                      << " | Omitidos ya existentes: " << omitidos
-                      << " | Fallidos: " << fallados << std::endl;
-        }
+    // -------------------------------------------------------------------------
+    // FASE 1: Descarga SFTP paralela
+    // -------------------------------------------------------------------------
+    LOG_INFO("Fase 1: Descargando archivos desde SFTP...");
+    std::cout << "[1/3] Iniciando descarga masiva SFTP..." << std::endl;
+    
+    double sftp_start = omp_get_wtime();
+    int descargados = 0, omitidos = 0, fallados = 0;
+    
+    SFTPParalelo::descargarArchivos(max_threads, descargados, omitidos, fallados);
+    
+    tiempo_sftp = omp_get_wtime() - sftp_start; // Medición de fase 1
+    
+    std::cout << "    -> Finalizado en " << tiempo_sftp << " s. Descargados: " << descargados << "\n" << std::endl;
+
+    // -------------------------------------------------------------------------
+    // FASE 2: Parseo CSV paralelo
+    // -------------------------------------------------------------------------
+    LOG_INFO("Fase 2: Parseando archivos CSV...");
+    std::cout << "[2/3] Iniciando parseo paralelo..." << std::endl;
+    
+    double parseo_start = omp_get_wtime();
+    ParseoParalelo::procesarArchivos(max_threads, todasLasTransacciones);
+    tiempo_parseo = omp_get_wtime() - parseo_start;
+    
+    std::cout << "TIEMPO EXCLUSIVO DE PARSEO: " << tiempo_parseo << " s.\n" << std::endl;
+
+    // -------------------------------------------------------------------------
+    // FASE 3: Consultas API
+    // -------------------------------------------------------------------------
+    ResultadosAPI resFinal; 
+
+    if (!todasLasTransacciones.empty()) {
+        LOG_INFO("Fase 3: Consumiendo API REST");
+        std::cout << "[3/3] Iniciando consultas a la API..." << std::endl;
+
+        double api_start = omp_get_wtime();
+        resFinal = APIParalelo::procesarConsultas(max_threads, todasLasTransacciones);
+        tiempo_api = omp_get_wtime() - api_start;
+
+        std::cout << "TIEMPO EXCLUSIVO DE API: " << tiempo_api << " s.\n" << std::endl;
     }
 
     // -------------------------------------------------------------------------
-    // FASE 2: Parseo CSV paralelo (mismo módulo que Paralela_2)
+    // SALIDA Y REGISTRO
     // -------------------------------------------------------------------------
-    if (opcion == 2 || opcion == 3) {
-        LOG_INFO("Fase 2: Parseando archivos CSV...");
+    double elapsed_global = omp_get_wtime() - start_time;
+    
+    std::cout << "=== PROCESO FINALIZADO EXITOSAMENTE ===" << std::endl;
+    std::cout << "TIEMPO TOTAL GLOBAL: " << elapsed_global << " segundos\n" << std::endl;
 
-        int user_threads_parseo;
-        std::cout << "\n=== CONFIGURACION PARSEO ===\n";
-        std::cout << "Procesadores lógicos detectados: " << max_threads << "\n";
-        std::cout << "Ingrese cantidad de hilos: ";
-        std::cin >> user_threads_parseo;
-        user_threads_parseo = std::clamp(user_threads_parseo, 1, max_threads);
-
-        ParseoParalelo::procesarArchivos(user_threads_parseo, todasLasTransacciones);
-
-        // ---------------------------------------------------------------------
-        // FASE 3: Consultas API paralelas y cálculo de métricas (módulo propio)
-        // ---------------------------------------------------------------------
-        if (!todasLasTransacciones.empty()) {
-            int user_threads_api;
-            std::cout << "\n=== CONFIGURACION API ===\n";
-            std::cout << "Ingrese cantidad de hilos para la API (Modo Test): ";
-            std::cin >> user_threads_api;
-            user_threads_api = std::clamp(user_threads_api, 1, max_threads);
-
-            APIParalelo::procesarConsultas(user_threads_api, todasLasTransacciones);
-        }
+    // Escritura en resultados.txt
+    std::ofstream archivo(Config::RESULTS_FILE);
+    if (archivo.is_open()) {
+        archivo << "FEMENINO = " << resFinal.promedioFemenino << "\n";
+        archivo << "MASCULINO = " << resFinal.promedioMasculino << "\n";
+        archivo << "TIEMPO_SFTP = " << tiempo_sftp << " segundos\n";
+        archivo << "TIEMPO_PARSEOCSV = " << tiempo_parseo << " segundos\n";
+        archivo << "TIEMPO_API = " << tiempo_api << " segundos\n";
+        archivo << "TIEMPO_GLOBAL = " << elapsed_global << " segundos\n";
+        archivo.close();
     }
 
-    double elapsed = omp_get_wtime() - start_time;
-    std::cout << "\nTiempo total de ejecución: " << elapsed << " segundos" << std::endl;
-
+    LOG_INFO("=== Aplicación finalizada. Tiempos -> SFTP: " + std::to_string(tiempo_sftp) + 
+             "s | Parseo: " + std::to_string(tiempo_parseo) + 
+             "s | API: " + std::to_string(tiempo_api) + 
+             "s | Total: " + std::to_string(elapsed_global) + "s ===");
+             
     return 0;
 }

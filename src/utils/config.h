@@ -29,6 +29,15 @@ namespace Config {
     constexpr int CURL_TRANSFER_TIMEOUT = 120; // Segundos máximos por transferencia
     constexpr int MAX_RETRIES = 5;
     constexpr int RETRY_BASE_DELAY_SEC = 2;    // Base del backoff exponencial
+
+    // Parámetros de la API REST de clientes
+    constexpr const char* API_BASE_URL = "https://api.sebastian.cl/cpyd/v1";
+    constexpr const char* API_AUTH_EMAIL = "jvargasm@utem.cl";
+    constexpr const char* API_AUTH_RUT = "21.142.624-1";
+    constexpr int API_CONNECT_TIMEOUT = 3;     // Segundos para establecer TCP/SSL
+    constexpr int API_REQUEST_TIMEOUT = 6;     // Segundos máximos por consulta GET
+    constexpr int API_CONCURRENT_REQUESTS = 16; // Peticiones simultáneas por hilo (curl_multi)
+    constexpr int API_BATCH_SIZE = 64;         // UUIDs por bloque en la fase paralela
 }
 
 #endif // CONFIG_H

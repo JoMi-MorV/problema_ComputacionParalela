@@ -1,141 +1,154 @@
 // =============================================================================
 // api_paralelo.cpp - Implementación de consultas API paralelas
 //
-// Usa una tabla hash compartida para cachear géneros por UUID, evitando
-// consultas duplicadas a internet. Calcula el monto promedio por género.
+// Aplica una estrategia de 3 fases: extracción de UUIDs únicos, poblamiento
+// masivo de caché vía API 
 // =============================================================================
 
 #include "api_paralelo.h"
 #include "../api/api.h"
+#include "../utils/config.h"
 #include "../utils/logger.h"
+#include <fstream>
 #include <iostream>
-#include <unordered_map>
+#include <unordered_set>
 #include <omp.h>
-#include <unistd.h>
+#include <algorithm>
 
-// Procesa todas las transacciones en paralelo consultando género y acumulando montos
-void APIParalelo::procesarConsultas(int hilos, const std::vector<Transaccion>& transacciones) {
+// ESTA ES LA LÍNEA QUE FALTABA (La "maté" sin querer, aquí la revivo)
+std::unordered_map<std::string, std::string> APIParalelo::cacheGeneros_;
+
+// Orquesta las 3 fases: únicos → API REST → promedios por género
+ResultadosAPI APIParalelo::procesarConsultas(int hilos, const std::vector<Transaccion>& transacciones) {
     if (transacciones.empty()) {
-        std::cout << "\n[!] No hay transacciones para analizar.\n";
-        return;
+        LOG_WARNING("Vector de transacciones vacío en fase API.");
+        return ResultadosAPI();
     }
 
-    double start_time = omp_get_wtime();
-    size_t totalLineas = transacciones.size();
+    const size_t totalLineas = transacciones.size();
     omp_set_num_threads(hilos);
 
-    std::cout << "\n=== PROCESANDO API EN PARALELO (Doble Verificación Asíncrona) ===\n";
-    std::cout << "Ejecutando con " << hilos << " hilos a máxima velocidad...\n\n";
+    std::cout << "\n=== PROCESANDO API EN PARALELO (Estrategia de 3 Fases) ===\n";
+    std::cout << "Ejecutando con " << hilos << " hilos...\n\n";
 
-    double totalMontoMasculino = 0.0;
-    double totalMontoFemenino = 0.0;
-    long totalTransaccionesMasculino = 0;
-    long totalTransaccionesFemenino = 0;
-    size_t lineasProcesadasGlobal = 0;
+    cacheGeneros_.clear();
+    cacheGeneros_.reserve(totalLineas / 4);
 
-    // Cache compartida: UUID -> género (o "PENDIENTE" mientras se consulta)
-    std::unordered_map<std::string, std::string> tablaHashGlobal;
+    if (!API::inicializar()) {
+        LOG_ERROR("Falló la inicialización de libcurl.");
+        return ResultadosAPI();
+    }
 
-    #pragma omp parallel reduction(+:totalMontoMasculino, totalMontoFemenino, totalTransaccionesMasculino, totalTransaccionesFemenino)
+    // =========================================================================
+    // FASE 1: EXTRAER CLIENTES ÚNICOS
+    // =========================================================================
+    std::cout << "[1/3] Extrayendo clientes únicos de los registros...\n";
+    
+    std::unordered_set<std::string> setGlobal;
+    setGlobal.reserve(totalLineas / 3);
+
+    #pragma omp parallel
     {
-        double montoMascLocal = 0.0;
-        double montoFemLocal = 0.0;
-        long contMascLocal = 0;
-        long contFemLocal = 0;
+        std::unordered_set<std::string> setLocal;
+        setLocal.reserve(4096);
 
-        #pragma omp for schedule(dynamic, 50)
-        for (size_t i = 0; i < totalLineas; i++) {
-            std::string uuid = transacciones[i].codigoCliente;
-            double monto = transacciones[i].montoAplicado;
-            std::string genero = "";
-            bool consultarInternet = false;
+        #pragma omp for schedule(static)
+        for (size_t i = 0; i < totalLineas; ++i) {
+            setLocal.insert(transacciones[i].codigoCliente);
+        }
 
-            // Paso 1: buscar en cache RAM; si no existe, reservar como PENDIENTE
-            #pragma omp critical(hash_access)
-            {
-                if (tablaHashGlobal.find(uuid) != tablaHashGlobal.end()) {
-                    genero = tablaHashGlobal[uuid];
-                } else {
-                    tablaHashGlobal[uuid] = "PENDIENTE";
-                    consultarInternet = true;
-                }
-            }
+        #pragma omp critical(consolidar_clientes)
+        {
+            setGlobal.insert(setLocal.begin(), setLocal.end());
+        }
+    }
 
-            // Paso 2: consulta HTTP fuera del candado (paralelismo real)
-            if (consultarInternet) {
-                genero = API::obtenerGeneroCliente(uuid);
+    std::vector<std::string> clientesUnicos(setGlobal.begin(), setGlobal.end());
+    const size_t totalUnicos = clientesUnicos.size();
+    std::cout << "-> Se redujeron " << totalLineas << " líneas a " << totalUnicos << " clientes únicos.\n\n";
 
-                // Renueva token si expiró y reintenta la consulta
-                if (genero == "TOKEN_EXPIRADO") {
-                    #pragma omp critical(token_emergency)
-                    {
-                        API::autenticarCliente();
-                    }
-                    genero = API::obtenerGeneroCliente(uuid);
-                }
+    // =========================================================================
+    // FASE 2: POBLAR CACHÉ VÍA API
+    // =========================================================================
+    std::cout << "[2/3] Consultando la API REST...\n";
+    if (!API::autenticar()) {
+        LOG_ERROR("No se pudo autenticar contra la API REST.");
+        return ResultadosAPI();
+    }
 
-                #pragma omp critical(hash_access)
-                {
-                    tablaHashGlobal[uuid] = genero;
-                }
-            }
-            // Otro hilo ya reservó este UUID: esperar a que termine la consulta
-            else if (genero == "PENDIENTE") {
-                bool listo = false;
-                while (!listo) {
-                    usleep(5000);
-                    #pragma omp critical(hash_access)
-                    {
-                        if (tablaHashGlobal[uuid] != "PENDIENTE") {
-                            genero = tablaHashGlobal[uuid];
-                            listo = true;
-                        }
-                    }
-                }
-            }
+    std::vector<std::string> generos(totalUnicos);
+    const size_t batchSize = static_cast<size_t>(Config::API_BATCH_SIZE);
+    const size_t totalBloques = (totalUnicos + batchSize - 1) / batchSize;
 
-            // Paso 3: contador de progreso y acumulación de montos por género
-            size_t progresoActual = 0;
+    double apiStartTime = omp_get_wtime();
+    size_t bloquesCompletados = 0;
+
+    #pragma omp parallel
+    {
+        #pragma omp for schedule(dynamic, 1)
+        for (size_t bloque = 0; bloque < totalBloques; ++bloque) {
+            size_t inicio = bloque * batchSize;
+            size_t cantidad = std::min(batchSize, totalUnicos - inicio);
+
+            API::obtenerGenerosBloque(clientesUnicos, inicio, cantidad, generos);
+
+            size_t progreso = 0;
             #pragma omp atomic capture
             {
-                lineasProcesadasGlobal++;
-                progresoActual = lineasProcesadasGlobal;
+                bloquesCompletados++;
+                progreso = bloquesCompletados;
             }
 
-            if (progresoActual % 1000 == 0 || progresoActual == totalLineas) {
-                #pragma omp critical(console_print)
+            if (progreso % 10 == 0 || progreso == totalBloques) {
+                size_t clientesIndexados = std::min(progreso * batchSize, totalUnicos);
+                double tiempoParcial = omp_get_wtime() - apiStartTime;
+
+                #pragma omp critical(console_print_api)
                 {
-                    std::cout << "[" << progresoActual << " / " << totalLineas << "] Procesados con éxito.\n";
+                    std::cout << "   -> API: [" << clientesIndexados << " / " << totalUnicos
+                              << "] clientes. Tiempo: " << tiempoParcial << " s\n";
                 }
-            }
-
-            if (genero == "MASCULINO") {
-                montoMascLocal += monto;
-                contMascLocal++;
-            } else if (genero == "FEMENINO") {
-                montoFemLocal += monto;
-                contFemLocal++;
             }
         }
 
-        totalMontoMasculino += montoMascLocal;
-        totalMontoFemenino += montoFemLocal;
-        totalTransaccionesMasculino += contMascLocal;
-        totalTransaccionesFemenino += contFemLocal;
+        API::limpiarRecursosHilo();
     }
 
-    // Cálculo de promedios y salida según formato de la rúbrica
-    double promedioMasculino = (totalTransaccionesMasculino > 0) ? (totalMontoMasculino / totalTransaccionesMasculino) : 0.0;
-    double promedioFemenino = (totalTransaccionesFemenino > 0) ? (totalMontoFemenino / totalTransaccionesFemenino) : 0.0;
-    double elapsed = omp_get_wtime() - start_time;
+    double tiempoApi = omp_get_wtime() - apiStartTime;
 
-    std::cout << "\n5. Cálculo de Métricas:";
-    std::cout << "\n- Promedio de compras por género:";
-    std::cout << "\n  - FEMENINO = " << promedioFemenino;
-    std::cout << "\n  - MASCULINO = " << promedioMasculino;
-    std::cout << "\n";
-    std::cout << "\n6. Salida:";
-    std::cout << "\n- FEMENINO = " << promedioFemenino;
-    std::cout << "\n- MASCULINO = " << promedioMasculino;
-    std::cout << "\n- TIEMPO = " << elapsed << " segundos\n";
+    for (size_t i = 0; i < totalUnicos; ++i) {
+        cacheGeneros_[clientesUnicos[i]] = generos[i];
+    }
+    std::cout << "-> Caché poblada en " << tiempoApi << " segundos.\n\n";
+
+    // =========================================================================
+    // FASE 3: CÁLCULO DE MÉTRICAS
+    // =========================================================================
+    std::cout << "[3/3] Calculando promedios finales en memoria...\n";
+    double totalMontoMasculino = 0.0, totalMontoFemenino = 0.0;
+    long totalTransaccionesMasculino = 0, totalTransaccionesFemenino = 0;
+
+    #pragma omp parallel for schedule(static) reduction(+:totalMontoMasculino, totalMontoFemenino, totalTransaccionesMasculino, totalTransaccionesFemenino)
+    for (size_t i = 0; i < totalLineas; ++i) {
+        const std::string& uuid = transacciones[i].codigoCliente;
+        const double monto = transacciones[i].montoAplicado;
+        auto it = cacheGeneros_.find(uuid);
+        if (it == cacheGeneros_.end()) continue;
+        const std::string& genero = it->second;
+
+        if (genero == "MASCULINO") {
+            totalMontoMasculino += monto;
+            totalTransaccionesMasculino++;
+        } else if (genero == "FEMENINO") {
+            totalMontoFemenino += monto;
+            totalTransaccionesFemenino++;
+        }
+    }
+
+    ResultadosAPI res;
+    res.promedioMasculino = (totalTransaccionesMasculino > 0) ? (totalMontoMasculino / totalTransaccionesMasculino) : 0.0;
+    res.promedioFemenino = (totalTransaccionesFemenino > 0) ? (totalMontoFemenino / totalTransaccionesFemenino) : 0.0;
+
+    LOG_INFO("Métricas calculadas en el submódulo de red. Redireccionando a main.");
+    return res; 
 }
