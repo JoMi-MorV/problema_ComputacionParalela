@@ -18,7 +18,7 @@
 
 std::unordered_map<std::string, std::string> APIParalelo::cacheGeneros_;
 
-// Orquesta las 3 fases: únicos → API REST → promedios por género
+// Orquesta las 3 fases: únicos, API REST, promedios por género
 ResultadosAPI APIParalelo::procesarConsultas(int hilos, const std::vector<Transaccion>& transacciones) {
     if (transacciones.empty()) {
         LOG_WARNING("Vector de transacciones vacío en fase API.");
