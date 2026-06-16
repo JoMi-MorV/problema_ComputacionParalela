@@ -52,14 +52,6 @@ make run
 
 Al ejecutar el programa se muestra un menú con tres opciones:
 
-| Opción | Descripción |
-|--------|-------------|
-| 1 | Solo descargar CSV desde SFTP |
-| 2 | Parsear los CSV en `output/` y luego consultar la API |
-| 3 | Descargar, parsear y consultar la API en secuencia |
-
-En cada fase se puede configurar la cantidad de hilos OpenMP a utilizar. La fase API se ejecuta automáticamente después del parseo (opciones 2 y 3) si hay transacciones cargadas en memoria.
-
 ## Estructura del proyecto
 
 ```
@@ -85,4 +77,5 @@ src/
 
 - Archivos CSV descargados: `output/`
 - Log de ejecución: `output/log.txt`
-- Métricas por género y tiempo: impresas en consola al finalizar la fase API
+- Resultados de la ejecución: `output/resultados.txt`
+- Métricas por género y tiempo: impresas en consola al finalizar
