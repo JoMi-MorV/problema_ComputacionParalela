@@ -15,7 +15,7 @@
 #include <omp.h>
 #include <algorithm>
 
-// ESTA ES LA LÍNEA QUE FALTABA (La "maté" sin querer, aquí la revivo)
+
 std::unordered_map<std::string, std::string> APIParalelo::cacheGeneros_;
 
 // Orquesta las 3 fases: únicos → API REST → promedios por género
